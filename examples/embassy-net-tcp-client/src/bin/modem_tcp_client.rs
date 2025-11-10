@@ -115,7 +115,7 @@ extern "C" {
 async fn main(spawner: Spawner) {
     let p = embassy_nrf::init(Default::default());
 
-    let mut led = Output::new(p.P0_02, Level::Low, OutputDrive::Standard);
+    let mut led = Output::new(p.P0_00, Level::Low, OutputDrive::Standard);
 
     fn configure_modem_non_secure() -> u32 {
         // The RAM memory space is divided into 32 regions of 8 KiB.
