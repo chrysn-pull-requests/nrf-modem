@@ -135,7 +135,10 @@ pub extern "C" fn nrf_modem_os_busywait(usec: i32) {
 /// - -NRF_ESHUTDOWN – Modem is not initialized, or was shut down.
 #[no_mangle]
 pub unsafe extern "C" fn nrf_modem_os_timedwait(_context: u32, timeout: *mut i32) -> i32 {
+    defmt::info!("Timed wait for {}", unsafe { *timeout });
+
     if nrf_modem_os_is_in_isr() {
+        defmt::info!("Sorry not from ISR");
         return -(nrfxlib_sys::NRF_EPERM as i32);
     }
 
@@ -143,6 +146,7 @@ pub unsafe extern "C" fn nrf_modem_os_timedwait(_context: u32, timeout: *mut i32
     // but at init time in the DECT stack.
     /*
     if !nrfxlib_sys::nrf_modem_is_initialized() {
+        defmt::info!("SHUTDOWN");
         return -(nrfxlib_sys::NRF_ESHUTDOWN as i32);
     }
     */
@@ -156,12 +160,16 @@ pub unsafe extern "C" fn nrf_modem_os_timedwait(_context: u32, timeout: *mut i32
             nrf_modem_os_busywait(1000);
 
             if NOTIFY_ACTIVE.swap(false, Ordering::Relaxed) {
+                defmt::info!("DONE");
                 return 0;
             }
 
             match *timeout {
                 -1 => continue,
-                0 => return -(nrfxlib_sys::NRF_EAGAIN as i32),
+                0 => {
+                    defmt::info!("EAGAIN");
+                    return -(nrfxlib_sys::NRF_EAGAIN as i32);
+                }
                 _ => *timeout -= 1,
             }
         }
@@ -173,6 +181,7 @@ pub unsafe extern "C" fn nrf_modem_os_timedwait(_context: u32, timeout: *mut i32
 /// This function shall wake all threads sleeping in nrf_modem_os_timedwait.
 #[no_mangle]
 pub extern "C" fn nrf_modem_os_event_notify() {
+    defmt::warn!("Event!");
     NOTIFY_ACTIVE.store(true, Ordering::SeqCst);
 }
 
@@ -250,6 +259,7 @@ pub extern "C" fn nrfx_ipc_init(
     handler: NrfxIpcHandler,
     p_context: usize,
 ) -> NrfxErr {
+    defmt::info!("Setting IPC handler");
     use cortex_m::interrupt::InterruptNumber;
     let irq = pac::Interrupt::IPC;
     let irq_num = usize::from(irq.number());
@@ -300,6 +310,7 @@ pub extern "C" fn nrfx_ipc_receive_event_disable(event_index: u8) {
 ///
 /// This function is safe to call from an ISR.
 unsafe fn generic_alloc(num_bytes_requested: usize, heap: &crate::WrappedHeap) -> *mut u8 {
+    defmt::info!("Attempting allocation of {} byte", num_bytes_requested);
     let sizeof_usize = core::mem::size_of::<usize>();
     let mut result = core::ptr::null_mut();
     critical_section::with(|cs| {
@@ -321,6 +332,7 @@ unsafe fn generic_alloc(num_bytes_requested: usize, heap: &crate::WrappedHeap) -
             }
         }
     });
+    defmt::info!("…allocation returned {:x}", result);
     result
 }
 
@@ -431,6 +443,12 @@ pub unsafe extern "C" fn nrf_modem_os_sem_init(
         current_value: AtomicU32::new(initial_count),
     };
 
+    defmt::info!("Current value is is {} (of {})", (*(sem as *mut Semaphore))
+        .current_value
+        .load(Ordering::SeqCst), limit);
+
+    defmt::info!("Initialized sem at {:x}", *sem as usize);
+
     0
 }
 
@@ -442,6 +460,7 @@ pub unsafe extern "C" fn nrf_modem_os_sem_init(
 /// - sem – The semaphore.
 #[no_mangle]
 pub extern "C" fn nrf_modem_os_sem_give(sem: *mut core::ffi::c_void) {
+    defmt::info!("Attempting sem_give at {:x}", sem as usize);
     unsafe {
         if sem.is_null() {
             return;
@@ -473,8 +492,10 @@ pub extern "C" fn nrf_modem_os_sem_take(
     sem: *mut core::ffi::c_void,
     mut timeout: core::ffi::c_int,
 ) -> core::ffi::c_int {
+    defmt::info!("Attempting sem_take at {:x}", sem as usize);
     unsafe {
         if sem.is_null() {
+            defmt::error!("… was null");
             return -(nrfxlib_sys::NRF_EAGAIN as i32);
         }
 
@@ -482,7 +503,13 @@ pub extern "C" fn nrf_modem_os_sem_take(
             timeout = nrfxlib_sys::NRF_MODEM_OS_NO_WAIT as i32;
         }
 
+        defmt::info!("Timeout is {}", timeout);
+
         loop {
+            defmt::info!("Current value is is {}", (*(sem as *mut Semaphore))
+                .current_value
+                .load(Ordering::SeqCst));
+
             if (*(sem as *mut Semaphore))
                 .current_value
                 .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |val| {
@@ -494,11 +521,15 @@ pub extern "C" fn nrf_modem_os_sem_take(
                 })
                 .is_ok()
             {
+                defmt::info!("…went OK");
                 return 0;
             }
 
             match timeout {
-                0 => return -(nrfxlib_sys::NRF_EAGAIN as i32),
+                0 => {
+                    defmt::error!("Timeout");
+                    return -(nrfxlib_sys::NRF_EAGAIN as i32);
+                }
                 nrfxlib_sys::NRF_MODEM_OS_FOREVER => {
                     nrf_modem_os_busywait(1000);
                 }
@@ -520,6 +551,7 @@ pub extern "C" fn nrf_modem_os_sem_take(
 /// - Current semaphore count.
 #[no_mangle]
 pub extern "C" fn nrf_modem_os_sem_count_get(sem: *mut core::ffi::c_void) -> core::ffi::c_uint {
+    defmt::info!("Inspecting sem_give at {:x}", sem as usize);
     unsafe {
         if sem.is_null() {
             return 0;
@@ -589,6 +621,8 @@ impl MutexLock {
 pub unsafe extern "C" fn nrf_modem_os_mutex_init(
     mutex: *mut *mut core::ffi::c_void,
 ) -> core::ffi::c_int {
+    defmt::info!("Attempting to initialize mutex from {:x}", mutex as usize);
+
     if mutex.is_null() {
         #[cfg(feature = "defmt")]
         defmt::error!("Failed to init mutex (null argument)");
@@ -618,6 +652,8 @@ pub unsafe extern "C" fn nrf_modem_os_mutex_init(
         // Already allocated, so just reinitialize (unlock) the mutex
         (*(mutex as *mut MutexLock)).unlock();
     }
+
+    defmt::info!("Successful");
 
     0
 }
