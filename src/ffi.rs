@@ -139,9 +139,13 @@ pub unsafe extern "C" fn nrf_modem_os_timedwait(_context: u32, timeout: *mut i32
         return -(nrfxlib_sys::NRF_EPERM as i32);
     }
 
+    // BIG FIXME: Probably nrf_modem_os_timedwait is only used at runtime by the cellular stack,
+    // but at init time in the DECT stack.
+    /*
     if !nrfxlib_sys::nrf_modem_is_initialized() {
         return -(nrfxlib_sys::NRF_ESHUTDOWN as i32);
     }
+    */
 
     if *timeout < -2 {
         // With Zephyr, negative timeouts pend on a semaphore with K_FOREVER.
