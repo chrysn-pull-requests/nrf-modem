@@ -88,6 +88,23 @@ static TX_ALLOCATOR: WrappedHeap = Mutex::new(RefCell::new(None));
 pub(crate) static MODEM_RUNTIME_STATE: RuntimeState = RuntimeState::new();
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
+/// Initialize `LIBRARY_ALLOCATOR`
+///
+/// # Soundness
+///
+/// This function must only be called once.
+pub unsafe fn init_heap() {
+    const HEAP_SIZE: usize = 1024;
+    /// Allocate some space in global data to use as a heap.
+    static mut HEAP_MEMORY: [u32; HEAP_SIZE] = [0u32; HEAP_SIZE];
+    let heap_start = &raw mut HEAP_MEMORY;
+    let heap_size = HEAP_SIZE * core::mem::size_of::<u32>();
+    critical_section::with(|cs| {
+        *LIBRARY_ALLOCATOR.borrow(cs).borrow_mut() =
+            Some(Heap::new(heap_start.cast::<u8>(), heap_size))
+    });
+}
+
 /// Start the NRF Modem library
 ///
 /// With the os_irq feature enabled, you need to specify the OS scheduled IRQ number.
@@ -148,17 +165,7 @@ pub async fn init_with_custom_layout(
             .modify(|_, w| w.dcdcen().enabled());
     }
 
-    unsafe {
-        const HEAP_SIZE: usize = 1024;
-        /// Allocate some space in global data to use as a heap.
-        static mut HEAP_MEMORY: [u32; HEAP_SIZE] = [0u32; HEAP_SIZE];
-        let heap_start = &raw mut HEAP_MEMORY;
-        let heap_size = HEAP_SIZE * core::mem::size_of::<u32>();
-        critical_section::with(|cs| {
-            *LIBRARY_ALLOCATOR.borrow(cs).borrow_mut() =
-                Some(Heap::new(heap_start.cast::<u8>(), heap_size))
-        });
-    }
+    unsafe { init_heap() };
 
     // Tell nrf_modem what memory it can use.
     static PARAMS: grounded::uninit::GroundedCell<nrfxlib_sys::nrf_modem_init_params> =
