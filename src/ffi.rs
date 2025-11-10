@@ -440,7 +440,7 @@ pub unsafe extern "C" fn nrf_modem_os_sem_init(
     // Initialize the data
     *((*sem) as *mut Semaphore) = Semaphore {
         max_value: limit,
-        current_value: AtomicU32::new(initial_count),
+        current_value: AtomicU32::new(limit - initial_count),
     };
 
     defmt::info!("Current value is is {} (of {})", (*(sem as *mut Semaphore))
