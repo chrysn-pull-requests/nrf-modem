@@ -13,6 +13,49 @@ use embassy_sync::{
     mutex::{Mutex, MutexGuard},
 };
 
+const _: () = const {
+    assert!(
+        nrfxlib_sys::nrf_modem_dect_phy_err_NRF_MODEM_DECT_PHY_SUCCESS == 0,
+        "Constant for success switched and is now not aligned with Result niche optimization."
+    )
+};
+#[derive(Debug)]
+struct PhyErr(core::num::NonZeroU16);
+type PhyResult = Result<(), PhyErr>;
+
+trait PhyResultExt {
+    fn into_phy_result(self) -> PhyResult;
+}
+
+impl PhyResultExt for u16 {
+    fn into_phy_result(self) -> PhyResult {
+        match core::num::NonZeroU16::try_from(self) {
+            Ok(v) => Err(PhyErr(v)),
+            Err(_) => Ok(()),
+        }
+    }
+}
+
+/// Error type that encompasses both styles of errors returned by the libmodem APIs.
+#[derive(Debug)]
+pub enum MixedError {
+    General(Error),
+    Phy(PhyErr),
+    UsageError,
+}
+
+impl From<Error> for MixedError {
+    fn from(input: Error) -> Self {
+        MixedError::General(input)
+    }
+}
+
+impl From<PhyErr> for MixedError {
+    fn from(input: PhyErr) -> Self {
+        MixedError::Phy(input)
+    }
+}
+
 // FIXME: What's a good length? Probably events can pile up, like "here's the last data and by the
 // way the transaction is now complete". And do we need the CS mutex?
 static DECT_EVENTS: embassy_sync::channel::Channel<CriticalSectionRawMutex, DectEventOuter, 4> =
@@ -105,7 +148,7 @@ enum DectEvent {
     Activate,
     Configure,
     TimeGet,
-    Completed,
+    Completed(PhyResult),
     /// This is both the EVT_PCC_ERROR that really is just CRC error, or failures during processing
     /// of a PCC.
     PccError(PccError),
@@ -210,7 +253,7 @@ extern "C" fn dect_event(arg: *const nrfxlib_sys::nrf_modem_dect_phy_event) {
                 op.voltage
             );
             // Go into different queue?
-            DectEvent::Completed
+            DectEvent::Completed(op.err.into_phy_result())
         }
         nrfxlib_sys::nrf_modem_dect_phy_event_id_NRF_MODEM_DECT_PHY_EVT_TIME => {
             // SAFETY: Checked the discriminator
@@ -393,7 +436,7 @@ impl DectPhy {
         drop(recvbuf);
     }
 
-    pub async fn rssi(&mut self, carrier: u16) -> Result<(u64, RssiResult<'_>), Error> {
+    pub async fn rssi(&mut self, carrier: u16) -> Result<(u64, RssiResult<'_>), MixedError> {
         self.clear_recvbuf();
 
         // Relevant DECT constant timing parameters are 1 frame = 10ms, each 10ms frame is composed
@@ -430,17 +473,18 @@ impl DectPhy {
                         range.expect("We requested just one run, that fits in the receive buffer"),
                     ));
                 }
-                DectEvent::Completed => {
+                DectEvent::Completed(Ok(())) => {
                     break;
                 }
+                DectEvent::Completed(e) => e?,
                 _ => panic!("Sequence violation"),
             }
         }
 
         let Some(result) = result else {
-            // FIXME How *should* we expose this? It does happen, eg. when requesting an
-            // unsupported carrier.
-            return Err(Error::InvalidSystemModeConfig);
+            // FIXME: Verify that it's an actual completion error that happens when requesting an
+            // unsupported channel.
+            panic!("Sequence violation");
         };
 
         Ok((
@@ -456,7 +500,7 @@ impl DectPhy {
     }
 
     // FIXME: heapless is not great for signature yet
-    pub async fn rx(&mut self) -> Result<Option<RecvResult<'_>>, Error> {
+    pub async fn rx(&mut self) -> Result<Option<RecvResult<'_>>, MixedError> {
         self.clear_recvbuf();
 
         unsafe {
@@ -505,9 +549,10 @@ impl DectPhy {
                     debug_assert!(pdc.is_none(), "Sequence violation");
                     pdc = Some(Err(PdcError::CrcError));
                 }
-                DectEvent::Completed => {
+                DectEvent::Completed(Ok(())) => {
                     break;
                 }
+                DectEvent::Completed(e) => e?,
                 _ => panic!("Sequence violation"),
             }
         }
@@ -539,7 +584,7 @@ impl DectPhy {
         network_id: u32,
         pcc: &[u8],
         pdc: &[u8],
-    ) -> Result<(), Error> {
+    ) -> Result<(), MixedError> {
         let phy_type = match pcc.len() {
             5 => 0,
             10 => 1,
@@ -555,8 +600,7 @@ impl DectPhy {
         // Handling this as an error seems to be most practical, as it won't take down the whole
         // system but will not go silently either.
         if network_id == 0 {
-            // FIXME: How do we convey a custom error?
-            return Err(Error::InvalidSystemModeConfig);
+            return Err(MixedError::UsageError);
         }
 
         unsafe {
@@ -581,14 +625,15 @@ impl DectPhy {
                 data_size: pdc.len() as _,
             })
         }
-        .into_result()?;
+        .into_result()
+        .map_err(MixedError::General)?;
 
         loop {
             match DECT_EVENTS.receive().await {
                 DectEventOuter {
-                    event: DectEvent::Completed,
+                    event: DectEvent::Completed(e),
                     ..
-                } => return Ok(()),
+                } => return e.map_err(MixedError::Phy),
                 _ => panic!("Sequence violation"),
             }
         }
