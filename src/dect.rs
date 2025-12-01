@@ -528,23 +528,50 @@ impl DectPhy {
         )))
     }
 
-    pub async fn tx(&mut self, pcc: &[u8], pdc: &[u8]) -> Result<(), Error> {
+    /// Transmit a message at the indicated time, or immediately if start_time is 0.
+    ///
+    /// The network_id influences scrambling. Pass in the full 32-bit network ID; this function
+    /// picks it apart depending on the PCC length. Beware that this is required to be non-zero.
+    pub async fn tx(
+        &mut self,
+        start_time: u64,
+        channel: u16,
+        network_id: u32,
+        pcc: &[u8],
+        pdc: &[u8],
+    ) -> Result<(), Error> {
         let phy_type = match pcc.len() {
             5 => 0,
             10 => 1,
             _ => panic!("Not a valid header length"),
         };
 
+        // The PHY function is documented to require this, and will indeed not transmit.
+        //
+        // But expressing this in the type would be odd (the full value is computed of parts where
+        // it is not clear whose resposibility it is to not be zero) for practical deployments. (Is
+        // it really the random lower 8 bits that need to special-case if the upper 24 are all-zero?)
+        //
+        // Handling this as an error seems to be most practical, as it won't take down the whole
+        // system but will not go silently either.
+        if network_id == 0 {
+            // FIXME: How do we convey a custom error?
+            return Err(Error::InvalidSystemModeConfig);
+        }
+
         unsafe {
             // FIXME: everything
             nrfxlib_sys::nrf_modem_dect_phy_tx(&nrfxlib_sys::nrf_modem_dect_phy_tx_params {
-                start_time: 0,
+                start_time,
                 handle: 2468,
-                network_id: 0x12345678, // like dect_shell defaults
+                // FIXME: Verify that libmodem or the network core does the >> 8 / & 0xff.
+                //
+                // (Probably: otherwise, the "must not be zero" can not be upheld).
+                network_id,
                 phy_type,
                 lbt_rssi_threshold_max: 0, // see below
-                carrier: 1665,             // like dect_shell default
-                lbt_period: 0,             // BIG FIXME
+                carrier: channel,
+                lbt_period: 0, // BIG FIXME
                 // The object may be smaller than expected for phy_header, but then, phy_type tells
                 // to only access the smaller struct fields anyway.
                 phy_header: pcc.as_ptr() as _,

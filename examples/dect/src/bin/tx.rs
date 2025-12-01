@@ -31,6 +31,10 @@ async fn main(spawner: Spawner) {
         info!("Press.");
 
         dect.tx(
+            0,
+            1665,
+            // FIXME: Not using a proper network ID yet
+            0x12345678,
             // Beacon as seen by the dect_shell
             &[17, 120, 150, 24, 112],
             &[
