@@ -73,6 +73,9 @@ pub enum PccError {
 pub enum PdcError {
     CrcError,
     OutOfSpace,
+    // Maybe if it straddled the timeout? I did observe this when sender and recipient timeouts
+    // could have lined up.
+    NotReceived,
     PccError(PccError),
 }
 
@@ -560,6 +563,7 @@ impl DectPhy {
         let result = match (pcc, pdc) {
             (None, None) => return Ok(None),
             (Some(Err(e)), None) => Err(e),
+            (Some(Ok(pcc)), None) => Ok((pcc, Err(PdcError::NotReceived))),
             (Some(Ok(pcc)), Some(pdc)) => Ok((pcc, pdc)),
             _ => panic!("Sequence violation"),
         };
