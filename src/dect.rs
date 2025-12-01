@@ -393,7 +393,7 @@ impl DectPhy {
         drop(recvbuf);
     }
 
-    pub async fn rssi(&mut self, carrier: u16) -> Result<(u64, RssiResult), Error> {
+    pub async fn rssi(&mut self, carrier: u16) -> Result<(u64, RssiResult<'_>), Error> {
         self.clear_recvbuf();
 
         // Relevant DECT constant timing parameters are 1 frame = 10ms, each 10ms frame is composed
@@ -459,7 +459,7 @@ impl DectPhy {
     pub async fn rx(&mut self) -> Result<Option<RecvResult<'_>>, Error> {
         self.clear_recvbuf();
 
-        let params = unsafe {
+        unsafe {
             // FIXME: everything
             nrfxlib_sys::nrf_modem_dect_phy_rx(&nrfxlib_sys::nrf_modem_dect_phy_rx_params {
                 start_time: 0,
@@ -535,7 +535,7 @@ impl DectPhy {
             _ => panic!("Not a valid header length"),
         };
 
-        let params = unsafe {
+        unsafe {
             // FIXME: everything
             nrfxlib_sys::nrf_modem_dect_phy_tx(&nrfxlib_sys::nrf_modem_dect_phy_tx_params {
                 start_time: 0,
