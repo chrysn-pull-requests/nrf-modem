@@ -49,7 +49,8 @@ modem-log = ["nrfxlib-sys/log", "dep:cc"]
 ### Switches the library into DECT-2020 NR+ mode.
 ###
 ### This alters its behavior a lot, while reusing the same core functionality.
-dect = ["nrfxlib-sys/dect", "dep:heapless"]
+# defmt is currently only in there to avoid conditionalizing everything; can be cleaned up later.
+dect = ["nrfxlib-sys/dect", "dep:heapless", "defmt"]
 
 nrf9160 = ["nrfxlib-sys/nrf9160", "dep:nrf9160-pac"]
 nrf9151 = ["nrf9120"]
