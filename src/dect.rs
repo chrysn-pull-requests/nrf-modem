@@ -19,8 +19,8 @@ const _: () = const {
         "Constant for success switched and is now not aligned with Result niche optimization."
     )
 };
-#[derive(Debug)]
-struct PhyErr(core::num::NonZeroU16);
+#[derive(Debug, defmt::Format)]
+pub struct PhyErr(core::num::NonZeroU16);
 type PhyResult = Result<(), PhyErr>;
 
 trait PhyResultExt {
@@ -79,30 +79,38 @@ pub enum PdcError {
     PccError(PccError),
 }
 
+/// Details of a [`RecvResult`] that did result in data being received.
+#[derive(Copy, Clone)]
+pub struct RecvOk {
+    pub pcc_time: u64,
+    pub pcc_len: usize,
+    pub pdc_len: Result<usize, PdcError>,
+}
+
 /// Result of a single receive operation.
 ///
 /// This keeps a lock on the receive buffer, and must therefore be dropped before the next attempt
 /// to perform any other operation.
-pub struct RecvResult<'a>(
-    MutexGuard<'static, CriticalSectionRawMutex, heapless::Vec<u8, 2400>>,
-    Result<((u64, usize), Result<usize, PdcError>), PccError>,
+pub struct RecvResult<'a> {
+    data: MutexGuard<'static, CriticalSectionRawMutex, heapless::Vec<u8, 2400>>,
+    indices: Result<RecvOk, PccError>,
     // This ensures that a .recv() result is used before the next attempt to receive something (as
     // that would panic around locking RECV_BUF).
-    core::marker::PhantomData<&'a mut ()>,
-);
+    _phantom: core::marker::PhantomData<&'a mut ()>,
+}
 
 impl<'a> RecvResult<'a> {
     pub fn pcc_time(&self) -> Result<u64, PccError> {
-        Ok(self.1?.0 .0)
+        Ok(self.indices?.pcc_time)
     }
     pub fn pcc(&self) -> Result<&[u8], PccError> {
-        Ok(&self.0[..self.1?.0 .1])
+        Ok(&self.data[..self.indices?.pcc_len])
     }
     pub fn pdc(&self) -> Result<&[u8], PdcError> {
-        let pcc_and_rest = self.1.map_err(PdcError::PccError)?;
-        let start = pcc_and_rest.0 .1;
-        let len = pcc_and_rest.1?;
-        self.0.get(start..start + len).ok_or(PdcError::OutOfSpace)
+        let pcc_and_rest = self.indices.map_err(PdcError::PccError)?;
+        let start = pcc_and_rest.pcc_len;
+        let len = pcc_and_rest.pdc_len?;
+        self.data.get(start..start + len).ok_or(PdcError::OutOfSpace)
     }
 }
 
@@ -339,7 +347,6 @@ extern "C" fn dect_event(arg: *const nrfxlib_sys::nrf_modem_dect_phy_event) {
             event,
             time: arg.time,
         })
-        .ok()
         .expect("Queue is managed")
 }
 
@@ -376,7 +383,7 @@ impl DectPhy {
         defmt::trace!("Initialization started.");
 
         let DectEventOuter {
-            event: DectEvent::Init { .. },
+            event: DectEvent::Init,
             ..
         } = DECT_EVENTS.receive().await
         else {
@@ -563,18 +570,18 @@ impl DectPhy {
         let result = match (pcc, pdc) {
             (None, None) => return Ok(None),
             (Some(Err(e)), None) => Err(e),
-            (Some(Ok(pcc)), None) => Ok((pcc, Err(PdcError::NotReceived))),
-            (Some(Ok(pcc)), Some(pdc)) => Ok((pcc, pdc)),
+            (Some(Ok((pcc_time, pcc_len))), None) => Ok(RecvOk { pcc_time, pcc_len, pdc_len: Err(PdcError::NotReceived) }),
+            (Some(Ok((pcc_time, pcc_len))), Some(pdc_len)) => Ok(RecvOk { pcc_time, pcc_len, pdc_len }),
             _ => panic!("Sequence violation"),
         };
 
-        Ok(Some(RecvResult(
-            RECVBUF
+        Ok(Some(RecvResult {
+            data: RECVBUF
                 .try_lock()
                 .expect("Was checked before, and ISR users release this before returning"),
-            result,
-            core::marker::PhantomData,
-        )))
+            indices: result,
+            _phantom: core::marker::PhantomData,
+        }))
     }
 
     /// Transmit a message at the indicated time, or immediately if start_time is 0.
@@ -632,14 +639,12 @@ impl DectPhy {
         .into_result()
         .map_err(MixedError::General)?;
 
-        loop {
-            match DECT_EVENTS.receive().await {
-                DectEventOuter {
-                    event: DectEvent::Completed(e),
-                    ..
-                } => return e.map_err(MixedError::Phy),
-                _ => panic!("Sequence violation"),
-            }
+        match DECT_EVENTS.receive().await {
+            DectEventOuter {
+                event: DectEvent::Completed(e),
+                ..
+            } => e.map_err(MixedError::Phy),
+            _ => panic!("Sequence violation"),
         }
     }
 }
