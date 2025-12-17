@@ -7,7 +7,8 @@
 //! list of handle slots, or more actions inside the interrupt) might be added later, or
 //! independently (using [`nrfxlib_sys`] and working off [`crate::init_dect_with_custom_layout`]).
 
-use crate::error::{Error, ErrorSource};
+use nrf_modem::nrfxlib_sys;
+use nrf_modem::{Error, ErrorSource, MemoryLayout, init_with_custom_layout_core};
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
     mutex::{Mutex, MutexGuard},
@@ -358,10 +359,10 @@ impl DectPhy {
     /// With the os_irq feature enabled, you need to specify the OS scheduled IRQ number.
     /// The modem's IPC interrupt should be higher than the os irq. (IPC should pre-empt the executor)
     pub async fn init_with_custom_layout(
-        memory_layout: crate::MemoryLayout,
+        memory_layout: MemoryLayout,
         #[cfg(feature = "os-irq")] os_irq: u8,
     ) -> Result<Self, Error> {
-        super::init_with_custom_layout_core(
+        init_with_custom_layout_core(
             memory_layout,
             #[cfg(feature = "os-irq")]
             os_irq,

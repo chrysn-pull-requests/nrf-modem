@@ -17,7 +17,7 @@ use dect_example::common::*;
 async fn main(spawner: Spawner) {
     let (ipc_start, leds, buttons) = init().await;
 
-    let mut dect = nrf_modem::dect::DectPhy::init_with_custom_layout(MemoryLayout {
+    let mut dect = dect::DectPhy::init_with_custom_layout(MemoryLayout {
         base_address: ipc_start,
         tx_area_size: 0x2000,
         rx_area_size: 0x2000,

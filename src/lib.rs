@@ -36,9 +36,6 @@ mod udp_socket;
 mod uicc_link;
 pub(crate) mod waker_node_list;
 
-#[cfg(feature = "dect")]
-pub mod dect;
-
 pub use nrfxlib_sys;
 
 pub use at::*;

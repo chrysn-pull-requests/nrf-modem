@@ -1,3 +1,5 @@
+pub mod dect;
+
 use cortex_m::peripheral::NVIC;
 use defmt::{debug, warn};
 use embassy_nrf::{

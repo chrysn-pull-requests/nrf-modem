@@ -50,7 +50,7 @@ modem-log = ["nrfxlib-sys/log", "dep:cc"]
 ###
 ### This alters its behavior a lot, while reusing the same core functionality.
 # defmt is currently only in there to avoid conditionalizing everything; can be cleaned up later.
-dect = ["nrfxlib-sys/dect", "dep:heapless", "defmt"]
+dect = ["nrfxlib-sys/dect"]
 
 nrf9160 = ["nrfxlib-sys/nrf9160", "dep:nrf9160-pac"]
 nrf9151 = ["nrf9120"]
