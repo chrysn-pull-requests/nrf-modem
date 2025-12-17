@@ -111,6 +111,7 @@ impl embedded_io_async::Error for Error {
     }
 }
 
+/// Helper to convert [`nrfxlib_sys`] numeric errors into idiomatic results.
 pub trait ErrorSource {
     fn into_result(self) -> Result<(), Error>;
 }
